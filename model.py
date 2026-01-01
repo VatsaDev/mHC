@@ -82,10 +82,8 @@ class MHA(nn.Module):
 
         if config["v_res"]:
             self.lamb1 = nn.Parameter(torch.tensor(0.5))
-            self.lamb2 = nn.Parameter(torch.tensor(0.5))
         else:
             self.lamb1 = 1.0
-            self.lamb2 = 0.0
 
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -116,7 +114,7 @@ class MHA(nn.Module):
             v1 = v
 
         # value res
-        v = self.lamb1 * v + self.lamb2 * v1.view_as(v) 
+        v = self.lamb1 * v + (1-self.lamb1) * v1.view_as(v) 
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:

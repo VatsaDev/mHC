@@ -112,12 +112,6 @@ matplotlib.rcParams['xtick.color'] = 'grey'
 matplotlib.rcParams['ytick.color'] = 'grey' 
 matplotlib.rcParams['legend.labelcolor'] = 'grey' 
 
-# hellaswag
-
-print("Loading HellaSwag for evaluation...")
-hswag = load_dataset("Rowan/hellaswag", split="validation", trust_remote_code=True)
-hellaswag_bpb_history = []
-
 # data Loading
 def _load_data_shard(file: Path):
     header = torch.from_file(str(file), shared=False, size=256, dtype=torch.int32)
@@ -175,8 +169,8 @@ def create_data_generator(filename_pattern: str, batch_size: int, block_size: in
         current_pos += batch_size * block_size
         yield inputs, targets
 
-train_data_pattern = os.path.join("data", data_dir, f"{data_dir}_train_*.bin")
-val_data_pattern = os.path.join("data", data_dir, f"{data_dir}_val_*.bin")
+train_data_pattern = os.path.join("data", data_dir, f"{data_dir}_text_train_*.bin")
+val_data_pattern = os.path.join("data", data_dir, f"{data_dir}_text_val_*.bin")
 
 def get_batch_from_shards(split, data_gens):
     if split == 'train': X, Y = next(data_gens['train'])
