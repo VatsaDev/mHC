@@ -1,0 +1,22 @@
+# literally just a code test
+
+n_embd = 16 # MuP minimum
+n_layer = 2
+n_head = 2
+
+batch_size = 1
+block_size = 1024 # ctx_len
+eval_interval = 20
+grad_accum_steps = 1 # basically microbatch
+
+lr = 3e-4
+min_lr = 1e-5
+
+max_iters = 1000
+eval_iters = 20
+warmup_iters = 200 
+
+dropout = 0.05
+weight_decay = 0.05
+
+data_dir = "synth"

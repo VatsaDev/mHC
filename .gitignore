@@ -1,0 +1,7 @@
+synth/
+synth_text/
+__pycache__/
+plots/
+checkpoints/
+sweeps/
+*.zip
