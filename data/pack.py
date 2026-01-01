@@ -9,8 +9,8 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 
 # --- Setup & Hyperparameters ---
-tok_path = "../tokenizers/venti_4k" 
-dataset_path = "synth"
+tok_path = "../tokenizers/mhc_1k" 
+dataset_path = "synth_text"
 DATA_CACHE_DIR = dataset_path
 shard_size = 10_000_000  # 10 million tokens per shard
 num_workers = 1         # Use 10 cores

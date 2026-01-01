@@ -479,30 +479,10 @@ for iter_num in range(start_iter, max_iters + 1):
         torch.save(fp16_state_dict, fp16_inference_path)
         print(f"Saved optimized inference model to {fp16_inference_path}")
 
-    # checking bench results at the same time as checkpoints makes sense
-    if iter_num % ckpt_iter == 0:
-        
-        hswag_bpb = evaluate_hellaswag_bpb(m, hswag, num_samples=100)
-        
-        print(f"--- Benchmark Results at Step {iter_num} ---")
-        print(f"HellaSwag BPB: {hswag_bpb:.4f}")
-
-
 print('Training finished.')
 
 final_val_loss = val_losses_history[-1] if val_losses_history else 0
 final_val_ppl = math.exp(final_val_loss)
 final_val_bpb = (final_val_loss/math.log(2)) * tokens_per_byte
 
-summary_file = "sweep_results.md"
-file_exists = os.path.isfile(summary_file)
-
-with open(summary_file, "a") as f:
-    if not file_exists or os.path.getsize(summary_file) == 0:
-        f.write("| Config Path | Run ID | Val Loss | Val PPL | Val BPB |\n")
-        f.write("|--- |--- |--- |--- |--- |--- |\n")
-    
-    config_name = os.path.basename(conf_path)
-    f.write(f"| {config_name} | {run_name} | {final_val_loss:.4f} | {final_val_ppl:.2f} | {final_val_bpb:.4f} |\n")
-
-print(f"Results appended to {summary_file}")
+print(f"final val loss: {final_val_loss}, final val ppl: {final_val_ppl}, final val bpb: {final_val_bpb}")
