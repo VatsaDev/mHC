@@ -19,4 +19,6 @@ warmup_iters = 200
 dropout = 0.05
 weight_decay = 0.05
 
+v_res = True # value residual
+
 data_dir = "synth"

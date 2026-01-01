@@ -91,6 +91,7 @@ model.config["n_head"] = data["n_head"]
 model.config["ctx_len"] = block_size
 model.config["vocab_size"] = vocab_size
 model.config["dropout"] = data["dropout"]
+model.config["v_res"] = data["v_res"]
 
 # nice wandb styles
 plt.style.use('default') 

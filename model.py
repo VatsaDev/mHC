@@ -11,7 +11,8 @@ config = {
     "dropout": 0.05,         
     "vocab_size": 50257,
     "ctx_len": 1024, 
-    "bias": False,           
+    "bias": False,
+    "v_res": True,
 }
 
 class RoPE(nn.Module):
@@ -77,6 +78,15 @@ class MHA(nn.Module):
 
         self.rope = RoPE(self.n_embd//self.n_head)
 
+        # value residual (based off the resformer paper, referenced code from @cloneofsimo diffusion speedrun)
+
+        if config["v_res"]:
+            self.lamb1 = nn.Parameter(torch.tensor(0.5))
+            self.lamb2 = nn.Parameter(torch.tensor(0.5))
+        else:
+            self.lamb1 = 1.0
+            self.lamb2 = 0.0
+
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
@@ -84,7 +94,7 @@ class MHA(nn.Module):
             self.register_buffer("bias", torch.tril(torch.ones(self.block_size, self.block_size))
                                         .view(1, 1, self.block_size, self.block_size))
 
-    def forward(self, x):
+    def forward(self, x, v1=None):
         B, T, C = x.size() # bs, ctx_len, n_embd
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -101,6 +111,12 @@ class MHA(nn.Module):
         # qk rope
         q = self.rope(q) 
         k = self.rope(k)
+
+        if v1 is None:
+            v1 = v
+
+        # value res
+        v = self.lamb1 * v + self.lamb2 * v1.view_as(v) 
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
@@ -119,7 +135,7 @@ class MHA(nn.Module):
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         
-        return y
+        return y, v1
 
 # Swiglu replaces MLP 
 
@@ -160,10 +176,13 @@ class Block(nn.Module):
 
         self.branch_scale = 1.0 / math.sqrt(config['n_layer']) # MuP residual rule a/root(L), a = 1.0 here
 
-    def forward(self, x):
-        x = x + self.branch_scale * self.attn(self.ln_1(x))
+    def forward(self, x, v1=None):
+        
+        attn_out, v1 = self.attn(self.ln_1(x), v1)
+
+        x = x + self.branch_scale * attn_out
         x = x + self.branch_scale * self.mlp(self.ln_2(x))
-        return x
+        return x, v1
 
 class Transformer(nn.Module):
 
@@ -226,8 +245,9 @@ class Transformer(nn.Module):
         
         x = self.transformer.drop(tok_emb + pos_emb)
         
+        v1 = None
         for block in self.transformer.h:
-            x = block(x)
+            x, v1 = block(x, v1)
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss
