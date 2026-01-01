@@ -1,5 +1,7 @@
 # deepseek mHC 
 
+[colab link](https://colab.research.google.com/drive/1sgE4ucL6zayCsA7oDj8E7feSPnHaZW9X)
+
 ## details
 
  - regular residual
