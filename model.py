@@ -116,7 +116,7 @@ class MHA(nn.Module):
             v1 = v
 
         # value res
-        lamb1 = torch.sigmoid(self.lamb1)
+        lamb1 = self.lamb1 # no torch sigmoid used, if the model wants to make negative signals for some residuals, allow it
         v = lamb1 * v + (1-lamb1) * v1.view_as(v) 
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
