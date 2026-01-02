@@ -92,6 +92,7 @@ model.config["ctx_len"] = block_size
 model.config["vocab_size"] = vocab_size
 model.config["dropout"] = data["dropout"]
 model.config["v_res"] = data["v_res"]
+model.config["streams"] = data["streams"]
 
 # nice wandb styles
 plt.style.use('default') 

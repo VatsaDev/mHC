@@ -9,7 +9,7 @@
  - mHC from deepseek 
  - abaltions with value residual
 
-## performance and ablations
+performance and ablations tbd, will be a write on my website
 
 ## possible uses
 

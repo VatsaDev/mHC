@@ -13,6 +13,7 @@ config = {
     "ctx_len": 1024, 
     "bias": False,
     "v_res": True,
+    "streams": 4, # number of streams for the hypernetwork
 }
 
 class RoPE(nn.Module):
@@ -114,7 +115,7 @@ class MHA(nn.Module):
             v1 = v
 
         # value res
-        v = self.lamb1 * v + (1-self.lamb1) * v1.view_as(v) 
+        v = torch.sigmoid(self.lamb1) * v + torch.sigmoid((1-self.lamb1)) * v1.view_as(v) 
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:

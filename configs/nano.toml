@@ -21,4 +21,6 @@ weight_decay = 0.05
 
 v_res = true # value residual
 
+streams = 4
+
 data_dir = "synth"
