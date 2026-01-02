@@ -13,6 +13,7 @@ config = {
     "ctx_len": 1024, 
     "bias": False,
     "v_res": True,
+    "HyperC": True,
     "streams": 4, # number of streams for the hypernetwork
 }
 
@@ -165,23 +166,119 @@ class MLP(nn.Module):
 
         return x
 
+class hyperC(nn.Module):
+
+    def __init__(self, n_embd, ns, in_fn):
+        super().__init__()
+
+        # 1 alpha for every HC net 
+
+        self.alpha_pre  = nn.Parameter(torch.ones(1) * 0.01) # computational op leaf?
+        self.alpha_post = nn.Parameter(torch.ones(1) * 0.01)
+        self.alpha_res  = nn.Parameter(torch.ones(1) * 0.01)
+
+        self.ns = ns
+        self.in_fn = in_fn
+        self.n_embd = n_embd
+
+        # the theta in the HC eqn, gets it to the required mapping input 
+
+        self.i_pre = nn.Linear(ns * n_embd, ns) # N 
+        self.i_post = nn.Linear(ns * n_embd, ns) # N 
+        self.i_res = nn.Linear(ns * n_embd, ns * ns) # N * N 
+
+        self.rm = nn.RMSNorm(n_embd) 
+
+    def _weight_gen(self, x_flat):
+
+        # actually makes the dynamic matrices in the HC eqn
+        # H = a * tanH(I * x_flat), not using bias
+
+        # x_flat is shape [bs, ctx, (ns * n_embd)] 
+
+        h_pre  = self.alpha_pre + torch.tanh(self.i_pre(x_flat))    # [bs, ctx, ns]
+        h_post = self.alpha_post + torch.tanh(self.i_post(x_flat))  # [bs, ctx, ns]
+        h_res  = self.alpha_res + torch.tanh(self.i_res(x_flat))    # [bs, ctx, ns * ns]
+
+        o_pre  = h_pre.unsqueeze(2)                               # [bs, ctx, 1, ns], 1 to N 
+        o_post = h_post.unsqueeze(3)                              # [bs, ctx, ns, 1], N to 1
+        o_res  = h_res.view(-1, x_flat.size(1), self.ns, self.ns) # [bs, ctx, N, N], N x N
+
+        return o_pre, o_post, o_res 
+
+    def forward(self, x, *args, **kwargs):
+
+        bs, ctx, ns, n_embd = x.shape
+
+        x_n = self.rm(x)
+        x_flat = x_n.view(bs, ctx, ns * n_embd)
+
+        w_pre, w_post, w_res = self._weight_gen(x_flat)
+
+        # weighted sum of streams 
+        # [bs, ctx, 1, ns] @ [bs, ctx, ns, n_embd] -> [bs, ctx, 1, n_embd], the 1 to N
+
+        x_in = torch.matmul(w_pre, x).squeeze(2) # [bs, ctx, n_embd]
+
+        result = self.in_fn(x_in, *args, **kwargs)
+
+        if isinstance(result, tuple):
+            y, *extra = result # handle attn + val res
+        else:
+            y, extra = result, [] # handle mlp 
+
+        # res mixing 
+        # [bs, ctx, ns, ns] [bs, ctx, ns, n_embd] -> [bs, ctx, ns, n_embd], the N to N
+        x_mix = torch.matmul(w_res, x)
+
+        # post layer int, N to 1
+        # [bs, ctx, ns, 1] @ [bs, ctx, 1, n_embd] -> [bs, ctx, 1, n_embd]
+        y_exp = torch.matmul(w_post, y.unsqueeze(2))
+
+        out = x_mix + y_exp # final HC 
+
+        # handles val residual
+
+        if extra:
+            return out, *extra
+        
+        return out
+        
 class Block(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.ln_1 = nn.RMSNorm(config['n_embd'])
-        self.attn = MHA()
-        self.ln_2 = nn.RMSNorm(config['n_embd'])
-        self.mlp = MLP()
+        self.rm_1 = nn.RMSNorm(config['n_embd']) 
+        self.rm_2 = nn.RMSNorm(config['n_embd'])
 
+        self.mlp = MLP()
+        self.attn = MHA()
+        
         self.branch_scale = 1.0 / math.sqrt(config['n_layer']) # MuP residual rule a/root(L), a = 1.0 here
 
-    def forward(self, x, v1=None):
-        
-        attn_out, v1 = self.attn(self.ln_1(x), v1)
+        # hypernetwork matrices
 
-        x = x + self.branch_scale * attn_out
-        x = x + self.branch_scale * self.mlp(self.ln_2(x))
+        ns = config["streams"]
+        n_embd = config["n_embd"]
+
+        self.hc_attn = hyperC(n_embd, ns, self.attn)
+        self.hc_mlp = hyperC(n_embd, ns, self.mlp)
+        
+    def forward(self, x, v1=None):
+
+        if config["HyperC"]:
+
+            attn_out, v1 = self.hc_attn(self.rm_1(x), v1)
+            mlp_out = self.hc_mlp(self.rm_2(x))
+
+        else:
+
+            attn_out, v1 = self.attn(self.rm_1(x), v1)
+            mlp_out = self.mlp(self.rm_2(x))
+
+        x = x + self.branch_scale * attn_out 
+        x = x + self.branch_scale * mlp_out
+
         return x, v1
 
 class Transformer(nn.Module):
@@ -191,12 +288,19 @@ class Transformer(nn.Module):
         
         self.block_size = config['ctx_len']
 
+        if config['HyperC']:
+            wte = nn.Embedding(config['vocab_size'], config['n_embd'] * config['streams'])
+        else:
+            wte = nn.Embedding(config['vocab_size'], config['n_embd'])
+
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config['vocab_size'], config['n_embd']), # tok embd
-            wpe = nn.Embedding(self.block_size, config['n_embd']), # pos embd
+            wte = wte, # tok embd
             drop = nn.Dropout(config['dropout']),
             h = nn.ModuleList([Block() for _ in range(config['n_layer'])]) 
         ))
+
+        self.ns = config['streams']
+        self.n_embd = config['n_embd']
 
         self.lm_head = nn.Linear(config['n_embd'], config['vocab_size'], bias=False)
         self.h_scale = 1/config['n_embd'] # muP
@@ -218,13 +322,10 @@ class Transformer(nn.Module):
     def _init_weights(self, module):
     
         if isinstance(module, nn.Linear):
-            if module.out_features == config['vocab_size']: # LM_head check
-                torch.nn.init.zeros_(module.weight) # MuP at all-zero LM head better stability
-            else:
-                # MuP std = 1 / sqrt(fan_in)
-                fan_in = module.weight.size(1)
-                std = 1.0 / math.sqrt(fan_in)
-                torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            # MuP std = 1 / sqrt(fan_in)
+            fan_in = module.weight.size(1)
+            std = 1.0 / math.sqrt(fan_in)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
 
         if isinstance(module, nn.Embedding):
             # MuP for Embeddings, Constant variance std=0.02 is standard
@@ -236,31 +337,42 @@ class Transformer(nn.Module):
         b, t = idx.size()
 
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
-
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
         
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         
-        x = self.transformer.drop(tok_emb + pos_emb)
+        x = self.transformer.drop(tok_emb)
+
+        if config['HyperC']:
+            x = x.view(b, t, self.ns, self.n_embd)
         
         v1 = None
         for block in self.transformer.h:
             x, v1 = block(x, v1)
 
+            if v1 is not None:
+                v1 = v1.detach() # trying to stop a graph break
+
+        if config['HyperC']:
+            # [bs, ctx, ns, n_embd] -> [bs, ctx, 1, n_embd]
+            x_head = x.view(b, t, self.ns * self.n_embd) # quick avgs all channels for LM_head
+        else:
+            x_head = x
+
         if targets is not None:
             # if we are given some desired targets also calculate the loss
-            logits = self.lm_head(x)
+            logits = self.lm_head(x_head)
+            logits = logits * self.h_scale 
+            logits = 30.0 * torch.tanh(logits / 30.0) # softcap logits at 30, gemma style
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        
         else:
             # inference-time mini-optimization: only forward final layer norm and lm_head on the very last position
             # Note: This optimization is not needed if using generate method below
-            logits = self.lm_head(x[:, [-1], :])  # note: using list [-1] to preserve the time dim
+            logits = self.lm_head(x_head[:, [-1], :])  # note: using list [-1] to preserve the time dim
+            logits = logits * self.h_scale 
+            logits = 30.0 * torch.tanh(logits / 30.0) # softcap logits at 30, gemma style
             loss = None
-
-        logits = logits * self.h_scale 
-        logits = 30.0 * torch.tanh(logits / 30.0) # softcap logits at 30, gemma style
 
         return logits, loss
 

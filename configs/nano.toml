@@ -20,6 +20,7 @@ dropout = 0.05
 weight_decay = 0.05
 
 v_res = true # value residual
+HyperC = true # hyper connections
 
 streams = 4
 
