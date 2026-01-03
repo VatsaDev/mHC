@@ -189,6 +189,16 @@ class hyperC(nn.Module):
 
         self.rm = nn.RMSNorm(n_embd) 
 
+    # turn into kernel later
+    def _mat_sinkhorn(self, A, iter=20):
+
+        for _ in range(iter):
+
+            A = A / A.sum(dim=-1, keepdim=True) + 1e-12 # row norm 
+            A = A / A.sum(dim=-2, keepdim=True) + 1e-12 # col norm 
+
+        return A
+
     def _weight_gen(self, x_flat):
 
         # actually makes the dynamic matrices in the HC eqn
@@ -200,9 +210,11 @@ class hyperC(nn.Module):
         h_post = self.alpha_post + torch.tanh(self.i_post(x_flat))  # [bs, ctx, ns]
         h_res  = self.alpha_res + torch.tanh(self.i_res(x_flat))    # [bs, ctx, ns * ns]
 
-        o_pre  = h_pre.unsqueeze(2)                               # [bs, ctx, 1, ns], 1 to N 
-        o_post = h_post.unsqueeze(3)                              # [bs, ctx, ns, 1], N to 1
-        o_res  = h_res.view(-1, x_flat.size(1), self.ns, self.ns) # [bs, ctx, N, N], N x N
+        # mHC parameterizations
+
+        o_pre  = torch.sigmoid(h_pre.unsqueeze(2))                                               # [bs, ctx, 1, ns], 1 to N 
+        o_post = 2 * torch.sigmoid(h_post.unsqueeze(3))                                          # [bs, ctx, ns, 1], N to 1
+        o_res  = self._mat_sinkhorn(torch.exp(h_res.view(-1, x_flat.size(1), self.ns, self.ns))) # [bs, ctx, N, N], N x N
 
         return o_pre, o_post, o_res 
 
